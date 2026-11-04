@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/windows"
 )
 
 // TestDirectoryLongPaths tests a variety of Directory operations on directory
@@ -80,5 +82,63 @@ func TestDirectoryLongPaths(t *testing.T) {
 	// Ensure that removing the internal file succeeds.
 	if err := directory.RemoveFile(longFileName); err != nil {
 		t.Error("unable to remove file with long name:", err)
+	}
+}
+
+// TestDirectoryRemoveFileReadOnly verifies that a file with the read-only
+// attribute set can be removed. Git creates loose object files with mode 0444,
+// which Git for Windows stores as the read-only attribute, so this is a very
+// common situation in practice and failing to handle it makes such files
+// impossible to delete (and, during synchronization, produces a transition
+// problem that is retried and fails on every cycle).
+func TestDirectoryRemoveFileReadOnly(t *testing.T) {
+	// Create a temporary directory (that will be automatically removed).
+	temporaryDirectoryPath := t.TempDir()
+
+	// Create a test file.
+	const name = "readonly"
+	path := filepath.Join(temporaryDirectoryPath, name)
+	if err := os.WriteFile(path, []byte("test"), 0600); err != nil {
+		t.Fatal("unable to create test file:", err)
+	}
+
+	// Convert the path to UTF-16 for the attribute calls.
+	path16, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		t.Fatal("unable to convert path to UTF-16:", err)
+	}
+
+	// Set the read-only attribute on the file and restore the original
+	// attributes when the test completes.
+	attributes, err := windows.GetFileAttributes(path16)
+	if err != nil {
+		t.Fatal("unable to read file attributes:", err)
+	}
+	defer windows.SetFileAttributes(path16, attributes)
+	if err := windows.SetFileAttributes(path16, attributes|windows.FILE_ATTRIBUTE_READONLY); err != nil {
+		t.Fatal("unable to set read-only attribute:", err)
+	}
+
+	// Open the temporary directory for access and defer its closure.
+	closer, _, err := Open(temporaryDirectoryPath, false)
+	if err != nil {
+		t.Fatal("unable to open directory:", err)
+	}
+	defer closer.Close()
+
+	// Extract the directory object.
+	directory, ok := closer.(*Directory)
+	if !ok {
+		t.Fatal("opened object is not a directory")
+	}
+
+	// Ensure that removal succeeds.
+	if err := directory.RemoveFile(name); err != nil {
+		t.Fatal("unable to remove read-only file:", err)
+	}
+
+	// Ensure that the file is gone.
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("file still exists after removal")
 	}
 }
