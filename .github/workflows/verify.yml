@@ -91,6 +91,11 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Release notes are generated from the commit range since the
+          # previous fork build, so the full history and tags are required.
+          fetch-depth: 0
+          fetch-tags: true
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25.x"
@@ -110,19 +115,31 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="v0.18.5-fork.${GITHUB_RUN_NUMBER}"
+          # The previous fork build is whatever fork tag is reachable from HEAD;
+          # the tag being published now does not exist yet.
+          PREVIOUS=$(git describe --tags --abbrev=0 --match 'v0.18.5-fork.*' HEAD 2>/dev/null || true)
+          {
+            echo "Fork-only build, published inside this repository only."
+            echo
+            echo "Built from commit \`${GITHUB_SHA}\`."
+            echo
+            if [ -n "$PREVIOUS" ]; then
+              echo "## Changes since ${PREVIOUS}"
+              echo
+              git log --no-merges --format='- %s (`%h`)' "${PREVIOUS}..HEAD"
+            else
+              echo "## Changes since the upstream base"
+              echo
+              git log --no-merges --format='- %s (`%h`)' -20 HEAD
+            fi
+            echo
+            echo "Each archive contains the CLI binary and the agent bundle for one platform."
+          } > release-notes.md
+          cat release-notes.md
           gh release create "$TAG" build/release/*.tar.gz \
             --target "$GITHUB_SHA" \
             --title "Fork build ${GITHUB_RUN_NUMBER} (based on v0.18.5)" \
-            --notes "Fork-only build, published inside this repository only.
-
-          Built from commit ${GITHUB_SHA}.
-
-          Included fixes:
-          - Windows: RemoveFile now clears the read-only attribute and retries (Git loose objects can be deleted).
-          - Agent installation always restores the executable bit on POSIX remotes.
-          - Synchronization endpoint recovers from transient cache write errors instead of dying.
-
-          Each archive contains the CLI binary and the agent bundle for one platform."
+            --notes-file release-notes.md
 
   windows:
     name: Windows - build and read-only removal test
