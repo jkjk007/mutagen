@@ -114,7 +114,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="v0.18.5-fork.${GITHUB_RUN_NUMBER}"
+          # Zero-pad the build number: GitHub orders releases by tag name as a
+          # string, so unpadded numbers sort as 9 > 8 > 11 > 10.
+          TAG=$(printf 'v0.18.5-fork.%04d' "$GITHUB_RUN_NUMBER")
           # The previous fork build is whatever fork tag is reachable from HEAD;
           # the tag being published now does not exist yet.
           PREVIOUS=$(git describe --tags --abbrev=0 --match 'v0.18.5-fork.*' HEAD 2>/dev/null || true)
