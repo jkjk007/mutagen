@@ -12,10 +12,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: verify-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   build:
     name: Build agent bundles
@@ -87,7 +83,7 @@ jobs:
 
   release:
     name: Release bundles for all platforms
-    runs-on: macos-15
+    runs-on: macos-latest
     timeout-minutes: 60
     permissions:
       contents: write
