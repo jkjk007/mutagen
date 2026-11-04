@@ -6,7 +6,7 @@ name: Verify
 on:
   push:
     branches:
-      - fix/mutagen-fixes
+      - fix/mutagen-fixes-coder
   workflow_dispatch:
 
 permissions:
