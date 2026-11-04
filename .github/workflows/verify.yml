@@ -82,8 +82,8 @@ jobs:
         run: GOOS=darwin GOARCH=arm64 go build ./pkg/... ./cmd/...
 
   release:
-    name: Release bundles for all platforms
-    runs-on: macos-latest
+    name: Release bundles (Windows, Linux, macOS)
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
       contents: write
@@ -93,7 +93,7 @@ jobs:
         with:
           go-version: "1.25.x"
       - name: Build release bundles
-        run: go run scripts/build.go --mode=release
+        run: go run scripts/build.go --mode=release-slim
       - name: List output
         run: ls -la build/release/ || true
       - name: Upload release bundles
