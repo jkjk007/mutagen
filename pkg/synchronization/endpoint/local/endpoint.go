@@ -812,6 +812,37 @@ func (e *endpoint) watchPoll(ctx context.Context, pollingInterval uint32, nonRec
 	}
 }
 
+// eventPathIgnored determines whether a watch event path lies inside content
+// that the ignore list excludes. Event paths are relative to the
+// synchronization root and use fastpath-style separators. A scan never
+// descends into an ignored directory, so events beneath one are irrelevant: the
+// entry could not have appeared in a scan in the first place. This matters
+// because watchers report activity inside ignored directories (for example
+// .git/index.lock written by a routine git status) and, without this filter,
+// every such event triggers a re-scan cycle for content that is never
+// synchronized.
+func (e *endpoint) eventPathIgnored(path string) bool {
+	// Check the path itself. The ignore status for a file or directory matching
+	// a pattern is the same in either case, so directory=false is sufficient.
+	if status, _ := e.ignorer.Ignore(path, false); status == ignore.IgnoreStatusIgnored {
+		return true
+	}
+
+	// Walk up the ancestors of the path. The first ignored ancestor that also
+	// forbids traversal makes everything beneath it irrelevant. We stop before
+	// the root, which is never checked as an ancestor.
+	for {
+		index := strings.LastIndexByte(path, '/')
+		if index <= 0 {
+			return false
+		}
+		path = path[:index]
+		if status, traverse := e.ignorer.Ignore(path, true); status == ignore.IgnoreStatusIgnored && !traverse {
+			return true
+		}
+	}
+}
+
 // watchRecursive is the watch loop for platforms where native recursive
 // watching facilities are available.
 func (e *endpoint) watchRecursive(ctx context.Context, pollingInterval uint32) {
@@ -965,14 +996,24 @@ WatchEstablishment:
 				// check the entire path for a temporary prefix to identify
 				// temporary directories (whose contents may have non-temporary
 				// names, such as in the case of internal staging directories).
-				ignore := strings.HasPrefix(path, filesystem.TemporaryNamePrefix) ||
-					strings.HasPrefix(fastpath.Base(path), filesystem.TemporaryNamePrefix)
-				if ignore {
+				if strings.HasPrefix(path, filesystem.TemporaryNamePrefix) ||
+					strings.HasPrefix(fastpath.Base(path), filesystem.TemporaryNamePrefix) {
 					logger.Tracef("Ignoring event path: \"%s\"", path)
 					continue
-				} else {
-					logger.Tracef("Processing event path: \"%s\"", path)
 				}
+
+				// Filter events occurring inside ignored content. Such events
+				// cannot affect synchronization: a scan never descends into an
+				// ignored directory, so the reported entries never appear in a
+				// snapshot. Dropping them here avoids re-scanning the entire
+				// tree in response to unrelated activity (for example a routine
+				// git status touching .git/index.lock).
+				if e.eventPathIgnored(path) {
+					logger.Tracef("Ignoring event path in ignored content: \"%s\"", path)
+					continue
+				}
+
+				logger.Tracef("Processing event path: \"%s\"", path)
 
 				// If acceleration is allowed (and currently available) on the
 				// endpoint, then register the path as a re-check path. We only
