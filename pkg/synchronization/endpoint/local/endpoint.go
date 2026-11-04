@@ -576,15 +576,24 @@ func (e *endpoint) saveCache(ctx context.Context, cachePath string, signal <-cha
 			// Save the cache.
 			e.logger.Debug("Saving cache to disk")
 			if err := encoding.MarshalAndSaveProtobuf(cachePath, e.cache); err != nil {
+				// Record the error so that Scan can report it, but keep the
+				// save loop running. A transient failure (e.g. a momentarily
+				// full disk) must not disable cache saving permanently,
+				// otherwise the error can never be cleared and every
+				// subsequent scan will fail with it long after the underlying
+				// condition has been resolved.
 				e.logger.Error("Cache save failed:", err)
 				e.cacheWriteError = err
 				e.unlockScanLock()
-				return
+				continue
 			}
 
 			// Update our state.
 			lastSavedCache = e.cache
 			lastSaveTime = now
+
+			// Clear any error recorded by previous save attempts.
+			e.cacheWriteError = nil
 
 			// Release the cache lock.
 			e.unlockScanLock()
@@ -1046,9 +1055,12 @@ func (e *endpoint) Scan(ctx context.Context, _ *core.Entry, full bool) (*core.Sn
 
 	// Before attempting to perform a scan, check for any cache write errors
 	// that may have occurred during background cache writes. If we see any
-	// error, then we skip scanning and report them here.
+	// error, then we skip scanning and report them here. Cache write errors are
+	// assumed to be transient (e.g. a temporarily full disk), so we recommend a
+	// retry instead of tearing the session down: the background save loop keeps
+	// running and clears the error as soon as a save succeeds.
 	if e.cacheWriteError != nil {
-		return nil, fmt.Errorf("unable to save cache to disk: %w", e.cacheWriteError), false
+		return nil, fmt.Errorf("unable to save cache to disk: %w", e.cacheWriteError), true
 	}
 
 	// Perform a scan.
