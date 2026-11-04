@@ -89,6 +89,8 @@ jobs:
     name: Release bundles for all platforms
     runs-on: macos-15
     timeout-minutes: 60
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -105,6 +107,24 @@ jobs:
           path: build/release/*
           retention-days: 14
           if-no-files-found: error
+      - name: Publish release in this repository only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v0.18.5-fork.${GITHUB_RUN_NUMBER}"
+          gh release create "$TAG" build/release/*.tar.gz \
+            --target "$GITHUB_SHA" \
+            --title "Fork build ${GITHUB_RUN_NUMBER} (based on v0.18.5)" \
+            --notes "Fork-only build, published inside this repository only.
+
+          Built from commit ${GITHUB_SHA}.
+
+          Included fixes:
+          - Windows: RemoveFile now clears the read-only attribute and retries (Git loose objects can be deleted).
+          - Agent installation always restores the executable bit on POSIX remotes.
+          - Synchronization endpoint recovers from transient cache write errors instead of dying.
+
+          Each archive contains the CLI binary and the agent bundle for one platform."
 
   windows:
     name: Windows - build and read-only removal test
