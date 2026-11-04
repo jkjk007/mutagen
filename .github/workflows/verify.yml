@@ -1,0 +1,100 @@
+# This workflow exists only in this fork. It builds and tests the changes on
+# the fix branch and publishes nothing outside the repository: no releases, no
+# pull requests, no messages to the upstream project.
+name: Verify
+
+on:
+  push:
+    branches:
+      - fix/mutagen-fixes
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build agent bundles
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+      - name: Build local bundles
+        run: go run scripts/build.go --mode=local
+      - name: Upload build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutagen-build
+          path: build/
+          retention-days: 7
+          if-no-files-found: warn
+
+  linux:
+    name: Linux - format, vet, unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        goversion: ["1.25.x", "1.26.x"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.goversion }}
+      - name: gofmt
+        run: |
+          output="$(gofmt -s -l .)"
+          if [ -n "$output" ]; then
+            echo "The following files are not gofmt'd:"
+            echo "$output"
+            gofmt -s -d $output
+            exit 1
+          fi
+      - name: go vet
+        run: go vet -composites=false ./pkg/... ./cmd/... ./scripts/... ./tools/...
+      - name: go build
+        run: go build ./pkg/... ./cmd/...
+      - name: Unit tests - filesystem
+        run: go test -v ./pkg/filesystem/...
+      - name: Unit tests - agent
+        run: go test -v ./pkg/agent/...
+
+  cross:
+    name: Cross-compile windows/darwin/linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+      - name: Windows amd64
+        run: GOOS=windows GOARCH=amd64 go build ./pkg/... ./cmd/...
+      - name: Linux arm64
+        run: GOOS=linux GOARCH=arm64 go build ./pkg/... ./cmd/...
+      - name: Darwin arm64
+        run: GOOS=darwin GOARCH=arm64 go build ./pkg/... ./cmd/...
+
+  windows:
+    name: Windows - build and read-only removal test
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+      - name: go build
+        run: go build ./pkg/... ./cmd/...
+      - name: Read-only removal test
+        run: go test -v -run "TestDirectoryRemoveFileReadOnly" ./pkg/filesystem/
+      - name: Filesystem tests
+        run: go test -v ./pkg/filesystem/
