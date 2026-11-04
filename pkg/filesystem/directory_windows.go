@@ -472,8 +472,25 @@ func (d *Directory) RemoveFile(name string) error {
 		return fmt.Errorf("unable to convert path to UTF-16: %w", err)
 	}
 
-	// Remove the file.
-	return windows.DeleteFile(path16)
+	// Remove the file. Note that Windows refuses to delete a file with the
+	// read-only attribute set, failing with ERROR_ACCESS_DENIED. This is a very
+	// common situation in practice because Git creates loose object files with
+	// mode 0444, and Git for Windows maps that mode to the read-only attribute.
+	// Without the handling below, such a file can never be removed, so once the
+	// object disappears on another endpoint the corresponding deletion becomes
+	// a transition problem that is retried (and fails) on every cycle. If we hit
+	// ERROR_ACCESS_DENIED, clear the read-only attribute and retry once. We don't
+	// clear the attribute preemptively to avoid an extra system call per removal.
+	err = windows.DeleteFile(path16)
+	if err != nil && errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		if attributes, attributeErr := windows.GetFileAttributes(path16); attributeErr == nil && attributes&windows.FILE_ATTRIBUTE_READONLY != 0 {
+			if attributeErr = windows.SetFileAttributes(path16, attributes&^windows.FILE_ATTRIBUTE_READONLY); attributeErr != nil {
+				return attributeErr
+			}
+			err = windows.DeleteFile(path16)
+		}
+	}
+	return err
 }
 
 // RemoveSymbolicLink deletes a symbolic link with the specified name inside the
