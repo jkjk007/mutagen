@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -368,10 +369,16 @@ func startMain(_ *cobra.Command, _ []string) error {
 		}
 	}
 
-	// Create forwarding sessions.
+	// Create forwarding sessions. If we've been asked to continue on error,
+	// record failures and keep going so that a single unreachable endpoint
+	// doesn't prevent the rest of the project from starting.
+	var creationErrors []string
 	for _, specification := range forwardingSpecifications {
 		if _, err := forward.CreateWithSpecification(daemonConnection, specification); err != nil {
-			return fmt.Errorf("unable to create forwarding session (%s): %v", specification.Name, err)
+			if !startConfiguration.continueOnError {
+				return fmt.Errorf("unable to create forwarding session (%s): %v", specification.Name, err)
+			}
+			creationErrors = append(creationErrors, fmt.Sprintf("forwarding session %s: %v", specification.Name, err))
 		}
 	}
 
@@ -381,7 +388,11 @@ func startMain(_ *cobra.Command, _ []string) error {
 		// Perform session creation.
 		session, err := sync.CreateWithSpecification(daemonConnection, specification)
 		if err != nil {
-			return fmt.Errorf("unable to create synchronization session (%s): %v", specification.Name, err)
+			if !startConfiguration.continueOnError {
+				return fmt.Errorf("unable to create synchronization session (%s): %v", specification.Name, err)
+			}
+			creationErrors = append(creationErrors, fmt.Sprintf("synchronization session %s: %v", specification.Name, err))
+			continue
 		}
 
 		// Determine whether or not to flush this session.
@@ -404,6 +415,20 @@ func startMain(_ *cobra.Command, _ []string) error {
 		if err := runInShell(command); err != nil {
 			return fmt.Errorf("post-create command failed: %w", err)
 		}
+	}
+
+	// If session creation failures were tolerated, report them now that
+	// everything else has been attempted. Exit non-zero so that scripts can
+	// still detect the partial failure.
+	if len(creationErrors) > 0 {
+		var builder strings.Builder
+		builder.WriteString("unable to create the following sessions:\n")
+		for _, creationError := range creationErrors {
+			builder.WriteString("	")
+			builder.WriteString(creationError)
+			builder.WriteString("\n")
+		}
+		return errors.New(strings.TrimSuffix(builder.String(), "\n"))
 	}
 
 	// Success.
@@ -430,6 +455,9 @@ var startConfiguration struct {
 	// noGlobalConfiguration specifies whether or not the global configuration
 	// file should be ignored.
 	noGlobalConfiguration bool
+	// continueOnError specifies whether or not to attempt every session even
+	// when some of them fail to be created.
+	continueOnError bool
 }
 
 func init() {
@@ -448,6 +476,9 @@ func init() {
 
 	// Wire up paused flags.
 	flags.BoolVarP(&startConfiguration.paused, "paused", "p", false, "Create the session pre-paused")
+
+	// Wire up error tolerance flags.
+	flags.BoolVar(&startConfiguration.continueOnError, "continue-on-error", false, "Attempt all sessions even if some fail to start")
 
 	// Wire up general configuration flags.
 	flags.BoolVar(&startConfiguration.noGlobalConfiguration, "no-global-configuration", false, "Ignore the global configuration file")
