@@ -99,6 +99,39 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25.x"
+      - name: Determine release version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Base version comes from the highest published semver release, or from
+          # version.go if nothing has been published yet. The patch component is
+          # then bumped, so each published build is a normal version increment.
+          LATEST=$(gh release list --limit 200 --exclude-drafts \
+            | awk '{print $1}' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            | sort -V | tail -1 || true)
+          if [ -n "$LATEST" ]; then
+            BASE="${LATEST#v}"
+          else
+            MAJOR=$(sed -n 's/.*VersionMajor = \([0-9]*\).*/\1/p' pkg/mutagen/version.go | head -1)
+            MINOR=$(sed -n 's/.*VersionMinor = \([0-9]*\).*/\1/p' pkg/mutagen/version.go | head -1)
+            PATCH=$(sed -n 's/.*VersionPatch = \([0-9]*\).*/\1/p' pkg/mutagen/version.go | head -1)
+            BASE="$MAJOR.$MINOR.$PATCH"
+          fi
+          MAJOR=$(echo "$BASE" | cut -d. -f1)
+          MINOR=$(echo "$BASE" | cut -d. -f2)
+          PATCH=$(echo "$BASE" | cut -d. -f3)
+          NEXT="$MAJOR.$MINOR.$((PATCH + 1))"
+          echo "version=$NEXT" >> "$GITHUB_OUTPUT"
+          echo "previous=$LATEST" >> "$GITHUB_OUTPUT"
+          # Stamp the version into the source so the binaries report it.
+          sed -i "s/^\tVersionMajor = [0-9]*/\tVersionMajor = $MAJOR/" pkg/mutagen/version.go
+          sed -i "s/^\tVersionMinor = [0-9]*/\tVersionMinor = $MINOR/" pkg/mutagen/version.go
+          sed -i "s/^\tVersionPatch = [0-9]*/\tVersionPatch = $((PATCH + 1))/" pkg/mutagen/version.go
+          echo "base: ${BASE:-none} -> next: $NEXT"
+          grep -E 'Version(Major|Minor|Patch) =' pkg/mutagen/version.go
+
       - name: Build release bundles
         run: go run scripts/build.go --mode=release-slim
       - name: List output
@@ -114,14 +147,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Zero-pad the build number: GitHub orders releases by tag name as a
-          # string, so unpadded numbers sort as 9 > 8 > 11 > 10.
-          TAG=$(printf 'v0.18.5-fork.%04d' "$GITHUB_RUN_NUMBER")
-          # The previous fork build is whatever fork tag is reachable from HEAD;
-          # the tag being published now does not exist yet.
-          PREVIOUS=$(git describe --tags --abbrev=0 --match 'v0.18.5-fork.*' HEAD 2>/dev/null || true)
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="v${VERSION}"
+          PREVIOUS="${{ steps.version.outputs.previous }}"
           {
-            echo "Fork-only build, published inside this repository only."
+            echo "Published in this repository only."
             echo
             echo "Built from commit \`${GITHUB_SHA}\`."
             echo
@@ -140,7 +170,7 @@ jobs:
           cat release-notes.md
           gh release create "$TAG" build/release/*.tar.gz \
             --target "$GITHUB_SHA" \
-            --title "Fork build ${GITHUB_RUN_NUMBER} (based on v0.18.5)" \
+            --title "v${VERSION}" \
             --notes-file release-notes.md
 
   windows:
