@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path"
-	"runtime"
 	"strings"
 
 	"github.com/google/uuid"
@@ -90,13 +89,15 @@ func install(logger *logging.Logger, transport Transport, prompter string, cmdEx
 		return fmt.Errorf("unable to copy agent binary: %w", err)
 	}
 
-	// For cases where we're copying from a Windows system to a POSIX remote,
-	// invoke "chmod +x" to add executability back to the copied binary. This is
-	// necessary under the specified circumstances because as soon as the agent
-	// binary is extracted from the bundle, it will lose its executability bit
-	// since Windows can't preserve this. This will also be applied to Windows
-	// POSIX remotes, but a "chmod +x" there will just be a no-op.
-	if runtime.GOOS == "windows" && posix {
+	// Ensure that the copied agent binary is executable on POSIX remotes. This
+	// is required because the copy operation does not preserve the executability
+	// bit: it is lost when copying from Windows (which has no such bit), and it
+	// can also be cleared by the remote's umask when the file is created. Note
+	// that we do this unconditionally rather than only for Windows hosts (the
+	// assumption that a POSIX host preserves the bit during copy does not hold
+	// for all transports and remote configurations), and that it's a no-op on
+	// Windows POSIX remotes.
+	if posix {
 		if err := prompting.Message(prompter, "Setting agent executability..."); err != nil {
 			return fmt.Errorf("unable to message prompter: %w", err)
 		}
