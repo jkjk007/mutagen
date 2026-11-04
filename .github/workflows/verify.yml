@@ -64,6 +64,8 @@ jobs:
         run: go test -v ./pkg/filesystem/...
       - name: Unit tests - agent
         run: go test -v ./pkg/agent/...
+      - name: Unit tests - synchronization endpoint
+        run: go test -v ./pkg/synchronization/endpoint/local/
 
   cross:
     name: Cross-compile windows/darwin/linux
