@@ -54,7 +54,7 @@ func queryHandleMetadata(name string, handle windows.Handle) (*Metadata, error) 
 			(*byte)(unsafe.Pointer(&attributes)),
 			uint32(unsafe.Sizeof(attributes)),
 		); err != nil {
-			if err != windows.ERROR_INVALID_PARAMETER {
+			if !errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
 				return nil, fmt.Errorf("unable to query reparse point attributes: %w", err)
 			}
 		} else {
